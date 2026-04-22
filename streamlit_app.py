@@ -36,11 +36,32 @@ def find_col(df, keywords):
     return None
 
 def find_date_col(df):
-    """Finds the date column to allow month-by-month grouping"""
+    """Smarter date column finder to prevent picking up Invoice Numbers or IDs"""
+    # 1. Look for exact known date column names first
+    exact_matches = ['DATE', 'INVOICE DATE', 'ATTENDANCE DATE', 'CREATED ON', 'VISIT DATE', 'ORDER DATE']
+    for ext in exact_matches:
+        for col in df.columns:
+            if ext == str(col).upper().strip():
+                return col
+                
+    # 2. Fallback: Look for columns that contain the word 'DATE'
     for col in df.columns:
-        if any(k in str(col).upper() for k in ['DATE', 'CREATED', 'INVOICE', 'TIME', 'DAY']):
+        if 'DATE' in str(col).upper():
             return col
     return None
+
+def parse_dates_safely(df, col_name):
+    """Robustly parses Excel dates, forces DD/MM/YYYY logic, and removes 1970 errors"""
+    if col_name and col_name in df.columns:
+        # Convert to datetime using dayfirst=True (handles DD/MM/YYYY standard)
+        dt_series = pd.to_datetime(df[col_name], errors='coerce', dayfirst=True)
+        # Drop junk years (like 1970 epoch errors or extreme future dates)
+        dt_series = dt_series.where((dt_series.dt.year >= 2000) & (dt_series.dt.year <= 2030), pd.NaT)
+        
+        # Create a clean 'Month' column (YYYY-MM)
+        df['Month'] = dt_series.dt.to_period('M').astype(str)
+        df['Month'] = df['Month'].replace('NaT', np.nan) # Clean up missing text
+    return df
 
 def dv(n, d): 
     return (n / d) if (pd.notnull(d) and d != 0) else 0
@@ -77,18 +98,14 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     col_visited = find_col(df_coverage, ['VISITED', 'VISIT'])
     col_billed = find_col(df_coverage, ['BILLED', 'BILL'])
 
-    # Find Date Columns for Monthly Tracking
+    # Find and Clean Date Columns safely
     date_sales = find_date_col(df_sales)
     date_att = find_date_col(df_attendance)
     date_cov = find_date_col(df_coverage)
 
-    # Convert dates and create 'Month' column (YYYY-MM)
-    if date_sales: 
-        df_sales['Month'] = pd.to_datetime(df_sales[date_sales], errors='coerce').dt.to_period('M').astype(str)
-    if date_att: 
-        df_attendance['Month'] = pd.to_datetime(df_attendance[date_att], errors='coerce').dt.to_period('M').astype(str)
-    if date_cov: 
-        df_coverage['Month'] = pd.to_datetime(df_coverage[date_cov], errors='coerce').dt.to_period('M').astype(str)
+    df_sales = parse_dates_safely(df_sales, date_sales)
+    df_attendance = parse_dates_safely(df_attendance, date_att)
+    df_coverage = parse_dates_safely(df_coverage, date_cov)
 
     # Base Processing for Master Excel Data
     desig_col = find_col(df_sales, ['DESIGNATION'])
@@ -116,7 +133,6 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     master = master.fillna('')
     master['emp_s'] = emp_s
 
-    # Return clean datasets so we can build the monthly view dynamically
     return master, df_sales, df_attendance, df_coverage, df_fulfill, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col
 
 
@@ -139,11 +155,10 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
             # Unpack processed data
             master_df, df_sales, df_att, df_cov, df_ful, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col = process_data(f_sales, f_user, f_att, f_cov, f_cc, f_ful)
 
-            # UI Construction
             tab1, tab2 = st.tabs(["👤 Employee Profile (Monthly View)", "📊 Overall Summary Data"])
 
             # ==========================================
-            # TAB 1: INDIVIDUAL EMPLOYEE MONTHLY PROFILE (BASED ON SKETCH)
+            # TAB 1: INDIVIDUAL EMPLOYEE MONTHLY PROFILE
             # ==========================================
             with tab1:
                 col_sel, _ = st.columns([1, 2])
@@ -156,7 +171,6 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                     emp_data = master_df[master_df['EMPLOYEE NAME'] == selected_emp].iloc[0]
                     emp_id_val = emp_data[emp_s]
 
-                    # 1. ABOUT SECTION (Profile Card)
                     st.markdown(f"""
                     <div class="profile-card">
                         <h3 style='margin-top:0px;'>About Employee</h3>
@@ -182,27 +196,26 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
 
                     st.markdown("### 📅 Month-by-Month Performance Trend")
                     
-                    # 2. MONTHLY DATA CALCULATION
-                    # Get unique months for this employee from Sales and Attendance
                     emp_sales = df_sales[df_sales[emp_s] == emp_id_val]
                     emp_att = df_att[df_att[emp_a] == emp_id_val] if 'Month' in df_att.columns else pd.DataFrame()
                     emp_coverage = df_cov[df_cov[emp_cov] == emp_id_val] if 'Month' in df_cov.columns else pd.DataFrame()
 
+                    # Gather all valid months
                     months = set()
                     if 'Month' in emp_sales.columns: months.update(emp_sales['Month'].dropna().unique())
                     if 'Month' in emp_att.columns: months.update(emp_att['Month'].dropna().unique())
+                    if 'Month' in emp_coverage.columns: months.update(emp_coverage['Month'].dropna().unique())
                     
-                    months = sorted(list(months)) # e.g., ['2024-10', '2024-11', '2024-12']
+                    # Remove any leftover blanks/NaTs
+                    months = sorted([m for m in months if m != 'nan' and pd.notnull(m)])
 
                     if not months:
-                        st.warning("No date/month data found for this employee. Ensure your Excel files have a Date column.")
+                        st.warning("No valid date data found for this employee. Ensure your Excel files have a proper Date column.")
                     else:
                         monthly_records = []
                         m_counter = 1
                         
                         for m in months:
-                            if m == 'NaT': continue
-                            
                             # MD (Mandays): Count of 'Present'
                             md_val = 0
                             if 'Month' in emp_att.columns:
@@ -226,7 +239,6 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                             # Fulfillment (Full.):
                             full_val = 0
                             if ticket_s and ticket_f and signoff_col:
-                                # Get tickets for this month
                                 m_tickets = m_sales[ticket_s].dropna()
                                 m_ful = df_ful[df_ful[ticket_f].isin(m_tickets)]
                                 
@@ -248,23 +260,20 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                             })
                             m_counter += 1
 
-                        # Create and display the table
+                        # Display Table
                         df_trend = pd.DataFrame(monthly_records)
                         st.dataframe(df_trend, use_container_width=True, hide_index=True)
 
-                        # Visual Chart
+                        # Display Chart
                         st.markdown("##### 📈 Performance vs Fulfillment Trend")
-                        df_trend['Perf Raw'] = df_trend['Performance (Sales ₹)'].str.replace('₹', '').str.replace(',', '').astype(float)
-                        df_trend['Full Raw'] = df_trend['Order Fullfilment (₹)'].str.replace('₹', '').str.replace(',', '').astype(float)
+                        df_trend['Perf Raw'] = df_trend['Performance (Sales ₹)'].str.replace('₹', '', regex=False).str.replace(',', '', regex=False).astype(float)
+                        df_trend['Full Raw'] = df_trend['Order Fullfilment (₹)'].str.replace('₹', '', regex=False).str.replace(',', '', regex=False).astype(float)
                         
                         fig = px.bar(df_trend, x='Timeline', y=['Perf Raw', 'Full Raw'], barmode='group', 
                                      labels={'value': 'Value in ₹', 'variable': 'Category'},
                                      color_discrete_map={'Perf Raw': '#3498db', 'Full Raw': '#2ecc71'})
                         st.plotly_chart(fig, use_container_width=True)
 
-            # ==========================================
-            # TAB 2: OVERALL SUMMARY
-            # ==========================================
             with tab2:
                 st.subheader("All Employees Dataset")
                 display_df = master_df.copy()
