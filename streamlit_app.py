@@ -23,9 +23,6 @@ st.markdown("""
         border-radius: 10px; margin-bottom: 20px;
         border-left: 5px solid #4CAF50;
     }
-    .drilldown-header {
-        color: #2c3e50; font-size: 1.1em; margin-bottom: 10px; font-weight: bold;
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -177,6 +174,7 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                     """, unsafe_allow_html=True)
 
                     st.markdown("### 📅 High-Level Monthly Overview")
+                    st.info("👆 **Interactive:** Click on any row below to view the detailed Category Breakdown for that month.")
                     
                     emp_sales = df_sales[df_sales[emp_s] == emp_id_val]
                     emp_att = df_att[df_att[emp_a] == emp_id_val] if 'Month' in df_att.columns else pd.DataFrame()
@@ -186,17 +184,15 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                     if 'Month' in emp_sales.columns: months.update(emp_sales['Month'].dropna().unique())
                     if 'Month' in emp_att.columns: months.update(emp_att['Month'].dropna().unique())
                     if 'Month' in emp_coverage.columns: months.update(emp_coverage['Month'].dropna().unique())
-                    
                     months = sorted([m for m in months if m != 'nan' and pd.notnull(m)])
 
                     if not months:
                         st.warning("No valid date data found for this employee.")
                     else:
                         monthly_records = []
-                        drill_down_data = {} # Used to store data for the sub-tables
+                        drill_down_data = {} 
                         m_counter = 1
                         
-                        # PREPARE FULFILLMENT LOOKUP TO AVOID RE-CALCULATING
                         price_lookup = df_sales[[ticket_s, price_col]].drop_duplicates(subset=[ticket_s]) if ticket_s else None
 
                         for m in months:
@@ -213,11 +209,8 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
 
                             m_sales = emp_sales[emp_sales['Month'] == m]
                             perf_sales = m_sales[sales_val_col].sum() if sales_val_col else 0
-                            
-                            # Calculate Lines Billed (Unique Categories)
                             lines_billed = m_sales[cat_col].nunique() if cat_col else 0
 
-                            # Fulfillment Total for Month
                             full_val = 0
                             if ticket_s and ticket_f and signoff_col and price_lookup is not None:
                                 m_tickets = m_sales[ticket_s].dropna()
@@ -225,8 +218,9 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                                 merged_f = pd.merge(m_ful, price_lookup, left_on=ticket_f, right_on=ticket_s, how='left')
                                 full_val = (pd.to_numeric(merged_f[price_col], errors='coerce').fillna(0) * pd.to_numeric(merged_f[signoff_col], errors='coerce').fillna(0)).sum()
 
+                            timeline_name = f"M{m_counter} ({m})"
                             monthly_records.append({
-                                "Timeline": f"M{m_counter} ({m})",
+                                "Timeline": timeline_name,
                                 "Mandays (MD)": md_val,
                                 "Market Working (Billed)": mw_billed,
                                 "Lines Billed (Categories)": lines_billed,
@@ -234,37 +228,57 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                                 "Order Fullfilment (₹)": f"₹ {full_val:,.0f}"
                             })
                             
-                            # Save data for drill-down table
-                            drill_down_data[m] = {
+                            drill_down_data[timeline_name] = {
                                 'm_sales': m_sales,
                                 'md_val': md_val,
-                                'timeline_name': f"M{m_counter} ({m})"
+                                'month_val': m
                             }
                             m_counter += 1
 
                         df_trend = pd.DataFrame(monthly_records)
-                        st.dataframe(df_trend, use_container_width=True, hide_index=True)
 
                         # ==========================================
-                        # THE NEW CATEGORY DRILL-DOWN SECTION
+                        # INTERACTIVE CLICKABLE DATAFRAME
                         # ==========================================
-                        st.markdown("---")
-                        st.markdown("### 🔽 Detailed Category Breakdown (Click to Expand)")
+                        selected_timeline = None
                         
-                        for m in months:
-                            data = drill_down_data[m]
+                        try:
+                            # This block works for Streamlit versions >= 1.35
+                            selection_event = st.dataframe(
+                                df_trend, 
+                                use_container_width=True, 
+                                hide_index=True,
+                                on_select="rerun",          # Enables clicking
+                                selection_mode="single-row" # Highlights only one row
+                            )
+                            
+                            if len(selection_event.selection.rows) > 0:
+                                selected_index = selection_event.selection.rows[0]
+                                selected_timeline = df_trend.iloc[selected_index]['Timeline']
+                        
+                        except TypeError:
+                            # Safe Fallback for older versions of Streamlit
+                            st.dataframe(df_trend, use_container_width=True, hide_index=True)
+                            st.markdown("---")
+                            selected_timeline = st.selectbox("Select a Timeline to view Detailed Category Breakdown:", df_trend['Timeline'].tolist())
+
+                        # ==========================================
+                        # DRILL-DOWN CATEGORY TABLE 
+                        # Shows fully open based on the clicked row!
+                        # ==========================================
+                        if selected_timeline:
+                            st.markdown("---")
+                            st.markdown(f"<div class='drilldown-header'>🔽 Detailed Category Breakdown for {selected_timeline}</div>", unsafe_allow_html=True)
+                            
+                            data = drill_down_data[selected_timeline]
                             m_sales = data['m_sales']
                             
-                            with st.expander(f"View breakdown for {data['timeline_name']}"):
-                                if m_sales.empty:
-                                    st.info("No sales data available for this month.")
-                                    continue
-                                
-                                # Use Category as grouping, fallback to SKU if Category missing
+                            if m_sales.empty:
+                                st.warning("No sales data available for this specific month.")
+                            else:
                                 grouping_col = cat_col if cat_col else (sku_col if sku_col else None)
                                 
                                 if grouping_col:
-                                    # Create the detailed aggregated table
                                     detail_list = []
                                     grouped = m_sales.groupby(grouping_col)
                                     
@@ -274,7 +288,6 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                                         cat_sales_val = group[sales_val_col].sum() if sales_val_col else 0
                                         cat_qty = group[qty_case_col].sum() if qty_case_col else 0
                                         
-                                        # Calculate fulfillment specifically for this Category's tickets
                                         cat_full_val = 0
                                         if ticket_s and ticket_f and signoff_col and price_lookup is not None:
                                             cat_tickets = group[ticket_s].dropna()
@@ -284,7 +297,7 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                                                 cat_full_val = (pd.to_numeric(c_merged[price_col], errors='coerce').fillna(0) * pd.to_numeric(c_merged[signoff_col], errors='coerce').fillna(0)).sum()
 
                                         detail_list.append({
-                                            "Timeline": data['timeline_name'],
+                                            "Timeline": selected_timeline,
                                             "Mandays": data['md_val'],
                                             "Category (Line)": name,
                                             "Billed Stores": stores_billed,
@@ -295,9 +308,10 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                                         })
                                     
                                     df_detail = pd.DataFrame(detail_list)
+                                    # Show the whole detail table directly (No expanders needed)
                                     st.dataframe(df_detail, use_container_width=True, hide_index=True)
                                 else:
-                                    st.warning("Could not find a 'Category' or 'Product' column in the Sales file to create a breakdown.")
+                                    st.warning("Could not find a 'Category' or 'Product' column to create the breakdown.")
 
             with tab2:
                 st.subheader("All Employees Dataset")
