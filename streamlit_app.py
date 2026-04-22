@@ -23,6 +23,9 @@ st.markdown("""
         border-radius: 10px; margin-bottom: 20px;
         border-left: 5px solid #4CAF50;
     }
+    .drilldown-header {
+        color: #2c3e50; font-size: 1.1em; margin-bottom: 10px; font-weight: bold;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -36,39 +39,24 @@ def find_col(df, keywords):
     return None
 
 def find_date_col(df):
-    """Smarter date column finder to prevent picking up Invoice Numbers or IDs"""
-    # 1. Look for exact known date column names first
     exact_matches = ['DATE', 'INVOICE DATE', 'ATTENDANCE DATE', 'CREATED ON', 'VISIT DATE', 'ORDER DATE']
     for ext in exact_matches:
         for col in df.columns:
-            if ext == str(col).upper().strip():
-                return col
-                
-    # 2. Fallback: Look for columns that contain the word 'DATE'
+            if ext == str(col).upper().strip(): return col
     for col in df.columns:
-        if 'DATE' in str(col).upper():
-            return col
+        if 'DATE' in str(col).upper(): return col
     return None
 
 def parse_dates_safely(df, col_name):
-    """Robustly parses Excel dates, forces DD/MM/YYYY logic, and removes 1970 errors"""
     if col_name and col_name in df.columns:
-        # Convert to datetime using dayfirst=True (handles DD/MM/YYYY standard)
         dt_series = pd.to_datetime(df[col_name], errors='coerce', dayfirst=True)
-        # Drop junk years (like 1970 epoch errors or extreme future dates)
         dt_series = dt_series.where((dt_series.dt.year >= 2000) & (dt_series.dt.year <= 2030), pd.NaT)
-        
-        # Create a clean 'Month' column (YYYY-MM)
         df['Month'] = dt_series.dt.to_period('M').astype(str)
-        df['Month'] = df['Month'].replace('NaT', np.nan) # Clean up missing text
+        df['Month'] = df['Month'].replace('NaT', np.nan)
     return df
-
-def dv(n, d): 
-    return (n / d) if (pd.notnull(d) and d != 0) else 0
 
 @st.cache_data
 def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
-    # Load Data
     df_sales = pd.read_excel(sales_file)
     df_user = pd.read_excel(user_file)
     df_attendance = pd.read_excel(att_file)
@@ -79,7 +67,6 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     for df in [df_sales, df_attendance, df_coverage, df_call_cycle, df_user, df_fulfill]:
         df.columns = df.columns.astype(str).str.strip()
 
-    # Identify Key Columns
     id_keys = ['EMPLOYEE CODE', 'EMP CODE', 'EMPLOYE I', 'EMP ID']
     emp_s = find_col(df_sales, id_keys)
     emp_u = find_col(df_user, id_keys)
@@ -87,18 +74,21 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     emp_cov = find_col(df_coverage, id_keys)
     emp_f = find_col(df_fulfill, id_keys)
 
-    ticket_s = find_col(df_sales, ['TICKET NO', 'TICKET NC', 'TICKET_NO'])
-    ticket_f = find_col(df_fulfill, ['TICKET NO', 'TICKET NC', 'TICKET_NO'])
+    ticket_s = find_col(df_sales, ['TICKET NO', 'TICKET NC', 'TICKET_NO', 'INVOICE NO'])
+    ticket_f = find_col(df_fulfill, ['TICKET NO', 'TICKET NC', 'TICKET_NO', 'INVOICE NO'])
     price_col = find_col(df_sales, ['SALE PRICE', 'SALE PRIC', 'PRICE']) 
     signoff_col = find_col(df_fulfill, ['SIGNOFF QTY', 'SIGN OFF', 'QTY'])
-    sales_val_col = find_col(df_sales, ['TOTAL SALES VALUE', 'TOTAL SAL', 'SALES VALUE'])
-    qty_case_col = find_col(df_sales, ['QTY IN CASE', 'CASE QTY', 'CASES'])
+    sales_val_col = find_col(df_sales, ['TOTAL SALES VALUE', 'TOTAL SAL', 'SALES VALUE', 'VALUE'])
+    qty_case_col = find_col(df_sales, ['QTY IN CASE', 'CASE QTY', 'CASES', 'QUANTITY'])
     dist_col = find_col(df_sales, ['DISTRIBUTOR NAME', 'DISTRIBUT'])
     
     col_visited = find_col(df_coverage, ['VISITED', 'VISIT'])
     col_billed = find_col(df_coverage, ['BILLED', 'BILL'])
 
-    # Find and Clean Date Columns safely
+    # Finding Product & Category Columns for the Drill-Down
+    cat_col = find_col(df_sales, ['CATEGORY', 'BRAND', 'LINE', 'PRODUCT GROUP', 'SEGMENT'])
+    sku_col = find_col(df_sales, ['SKU', 'PRODUCT NAME', 'ITEM NAME', 'DESCRIPTION', 'MATERIAL'])
+
     date_sales = find_date_col(df_sales)
     date_att = find_date_col(df_attendance)
     date_cov = find_date_col(df_coverage)
@@ -107,7 +97,6 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     df_attendance = parse_dates_safely(df_attendance, date_att)
     df_coverage = parse_dates_safely(df_coverage, date_cov)
 
-    # Base Processing for Master Excel Data
     desig_col = find_col(df_sales, ['DESIGNATION'])
     if desig_col:
         tsi_sales = df_sales[df_sales[desig_col].astype(str).str.contains('TERRITORY SALES INCHARGE', na=False, case=False)].copy()
@@ -121,19 +110,17 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     user_info = df_user[user_cols]
     master = pd.merge(base, user_info, left_on=emp_s, right_on=emp_u, how='left')
 
-    # Safe Numeric Conversions
     df_sales[sales_val_col] = pd.to_numeric(df_sales[sales_val_col], errors='coerce').fillna(0)
     df_sales[qty_case_col] = pd.to_numeric(df_sales[qty_case_col], errors='coerce').fillna(0)
     df_coverage[col_visited] = pd.to_numeric(df_coverage[col_visited], errors='coerce').fillna(0)
     df_coverage[col_billed] = pd.to_numeric(df_coverage[col_billed], errors='coerce').fillna(0)
 
-    # Master Aggregations (Overall snapshot)
     l_val = df_sales.groupby(emp_s)[sales_val_col].sum().reset_index(name='L_val')
     master = master.merge(l_val, on=emp_s, how='left')
     master = master.fillna('')
     master['emp_s'] = emp_s
 
-    return master, df_sales, df_attendance, df_coverage, df_fulfill, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col
+    return master, df_sales, df_attendance, df_coverage, df_fulfill, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col, cat_col, sku_col
 
 
 # ==========================================
@@ -152,14 +139,10 @@ f_ful = st.sidebar.file_uploader("6. Order Fulfillment", type=['xlsx'])
 if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
     with st.spinner("Processing data, please wait..."):
         try:
-            # Unpack processed data
-            master_df, df_sales, df_att, df_cov, df_ful, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col = process_data(f_sales, f_user, f_att, f_cov, f_cc, f_ful)
+            master_df, df_sales, df_att, df_cov, df_ful, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col, cat_col, sku_col = process_data(f_sales, f_user, f_att, f_cov, f_cc, f_ful)
 
             tab1, tab2 = st.tabs(["👤 Employee Profile (Monthly View)", "📊 Overall Summary Data"])
 
-            # ==========================================
-            # TAB 1: INDIVIDUAL EMPLOYEE MONTHLY PROFILE
-            # ==========================================
             with tab1:
                 col_sel, _ = st.columns([1, 2])
                 with col_sel:
@@ -167,7 +150,6 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                     selected_emp = st.selectbox("Search / Select Employee:", sorted([x for x in emp_list if str(x).strip() != '']))
 
                 if selected_emp:
-                    # Get Employee Master Details
                     emp_data = master_df[master_df['EMPLOYEE NAME'] == selected_emp].iloc[0]
                     emp_id_val = emp_data[emp_s]
 
@@ -194,85 +176,128 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                     </div>
                     """, unsafe_allow_html=True)
 
-                    st.markdown("### 📅 Month-by-Month Performance Trend")
+                    st.markdown("### 📅 High-Level Monthly Overview")
                     
                     emp_sales = df_sales[df_sales[emp_s] == emp_id_val]
                     emp_att = df_att[df_att[emp_a] == emp_id_val] if 'Month' in df_att.columns else pd.DataFrame()
                     emp_coverage = df_cov[df_cov[emp_cov] == emp_id_val] if 'Month' in df_cov.columns else pd.DataFrame()
 
-                    # Gather all valid months
                     months = set()
                     if 'Month' in emp_sales.columns: months.update(emp_sales['Month'].dropna().unique())
                     if 'Month' in emp_att.columns: months.update(emp_att['Month'].dropna().unique())
                     if 'Month' in emp_coverage.columns: months.update(emp_coverage['Month'].dropna().unique())
                     
-                    # Remove any leftover blanks/NaTs
                     months = sorted([m for m in months if m != 'nan' and pd.notnull(m)])
 
                     if not months:
-                        st.warning("No valid date data found for this employee. Ensure your Excel files have a proper Date column.")
+                        st.warning("No valid date data found for this employee.")
                     else:
                         monthly_records = []
+                        drill_down_data = {} # Used to store data for the sub-tables
                         m_counter = 1
                         
+                        # PREPARE FULFILLMENT LOOKUP TO AVOID RE-CALCULATING
+                        price_lookup = df_sales[[ticket_s, price_col]].drop_duplicates(subset=[ticket_s]) if ticket_s else None
+
                         for m in months:
-                            # MD (Mandays): Count of 'Present'
                             md_val = 0
                             if 'Month' in emp_att.columns:
                                 att_col = find_col(emp_att, ['ATTENDANCE', 'STATUS'])
                                 if att_col:
                                     md_val = len(emp_att[(emp_att['Month'] == m) & (emp_att[att_col].astype(str).str.upper() == 'PRESENT')])
 
-                            # MW (Market Working): Visited & Billed
-                            mw_visited = 0
                             mw_billed = 0
                             if 'Month' in emp_coverage.columns:
                                 m_cov = emp_coverage[emp_coverage['Month'] == m]
-                                mw_visited = m_cov[col_visited].sum() if col_visited else 0
                                 mw_billed = m_cov[col_billed].sum() if col_billed else 0
 
-                            # Perf (Performance): Sales Value
                             m_sales = emp_sales[emp_sales['Month'] == m]
                             perf_sales = m_sales[sales_val_col].sum() if sales_val_col else 0
-                            perf_cases = m_sales[qty_case_col].sum() if qty_case_col else 0
+                            
+                            # Calculate Lines Billed (Unique Categories)
+                            lines_billed = m_sales[cat_col].nunique() if cat_col else 0
 
-                            # Fulfillment (Full.):
+                            # Fulfillment Total for Month
                             full_val = 0
-                            if ticket_s and ticket_f and signoff_col:
+                            if ticket_s and ticket_f and signoff_col and price_lookup is not None:
                                 m_tickets = m_sales[ticket_s].dropna()
                                 m_ful = df_ful[df_ful[ticket_f].isin(m_tickets)]
-                                
-                                price_lookup = df_sales[[ticket_s, price_col]].drop_duplicates(subset=[ticket_s])
                                 merged_f = pd.merge(m_ful, price_lookup, left_on=ticket_f, right_on=ticket_s, how='left')
                                 full_val = (pd.to_numeric(merged_f[price_col], errors='coerce').fillna(0) * pd.to_numeric(merged_f[signoff_col], errors='coerce').fillna(0)).sum()
-
-                            # Productivity (Prod): Average Cases per Billed Store
-                            prod_val = round(dv(perf_cases, mw_billed), 2)
 
                             monthly_records.append({
                                 "Timeline": f"M{m_counter} ({m})",
                                 "Mandays (MD)": md_val,
-                                "Market Working (MW) Visited": mw_visited,
-                                "Market Working (MW) Billed": mw_billed,
+                                "Market Working (Billed)": mw_billed,
+                                "Lines Billed (Categories)": lines_billed,
                                 "Performance (Sales ₹)": f"₹ {perf_sales:,.0f}",
-                                "Order Fullfilment (₹)": f"₹ {full_val:,.0f}",
-                                "Productivity (Avg Cases)": prod_val
+                                "Order Fullfilment (₹)": f"₹ {full_val:,.0f}"
                             })
+                            
+                            # Save data for drill-down table
+                            drill_down_data[m] = {
+                                'm_sales': m_sales,
+                                'md_val': md_val,
+                                'timeline_name': f"M{m_counter} ({m})"
+                            }
                             m_counter += 1
 
-                        # Display Table
                         df_trend = pd.DataFrame(monthly_records)
                         st.dataframe(df_trend, use_container_width=True, hide_index=True)
 
-                        # Display Chart
-                        st.markdown("##### 📈 Performance vs Fulfillment Trend")
-                        df_trend['Perf Raw'] = df_trend['Performance (Sales ₹)'].str.replace('₹', '', regex=False).str.replace(',', '', regex=False).astype(float)
-                        df_trend['Full Raw'] = df_trend['Order Fullfilment (₹)'].str.replace('₹', '', regex=False).str.replace(',', '', regex=False).astype(float)
+                        # ==========================================
+                        # THE NEW CATEGORY DRILL-DOWN SECTION
+                        # ==========================================
+                        st.markdown("---")
+                        st.markdown("### 🔽 Detailed Category Breakdown (Click to Expand)")
                         
-                        fig = px.bar(df_trend, x='Timeline', y=['Perf Raw', 'Full Raw'], barmode='group', 
-                                     labels={'value': 'Value in ₹', 'variable': 'Category'},
-                                     color_discrete_map={'Perf Raw': '#3498db', 'Full Raw': '#2ecc71'})
-                        st.plotly_chart(fig, use_container_width=True)
+                        for m in months:
+                            data = drill_down_data[m]
+                            m_sales = data['m_sales']
+                            
+                            with st.expander(f"View breakdown for {data['timeline_name']}"):
+                                if m_sales.empty:
+                                    st.info("No sales data available for this month.")
+                                    continue
+                                
+                                # Use Category as grouping, fallback to SKU if Category missing
+                                grouping_col = cat_col if cat_col else (sku_col if sku_col else None)
+                                
+                                if grouping_col:
+                                    # Create the detailed aggregated table
+                                    detail_list = []
+                                    grouped = m_sales.groupby(grouping_col)
+                                    
+                                    for name, group in grouped:
+                                        types_of_products = group[sku_col].nunique() if sku_col else len(group)
+                                        stores_billed = group[ticket_s].nunique() if ticket_s else 0
+                                        cat_sales_val = group[sales_val_col].sum() if sales_val_col else 0
+                                        cat_qty = group[qty_case_col].sum() if qty_case_col else 0
+                                        
+                                        # Calculate fulfillment specifically for this Category's tickets
+                                        cat_full_val = 0
+                                        if ticket_s and ticket_f and signoff_col and price_lookup is not None:
+                                            cat_tickets = group[ticket_s].dropna()
+                                            cat_ful = df_ful[df_ful[ticket_f].isin(cat_tickets)]
+                                            if not cat_ful.empty:
+                                                c_merged = pd.merge(cat_ful, price_lookup, left_on=ticket_f, right_on=ticket_s, how='left')
+                                                cat_full_val = (pd.to_numeric(c_merged[price_col], errors='coerce').fillna(0) * pd.to_numeric(c_merged[signoff_col], errors='coerce').fillna(0)).sum()
+
+                                        detail_list.append({
+                                            "Timeline": data['timeline_name'],
+                                            "Mandays": data['md_val'],
+                                            "Category (Line)": name,
+                                            "Billed Stores": stores_billed,
+                                            "Types of Products Sold": types_of_products,
+                                            "Total Sales Value": f"₹ {cat_sales_val:,.0f}",
+                                            "Qty Sold": f"{cat_qty:,.1f}",
+                                            "Order Fulfillment": f"₹ {cat_full_val:,.0f}"
+                                        })
+                                    
+                                    df_detail = pd.DataFrame(detail_list)
+                                    st.dataframe(df_detail, use_container_width=True, hide_index=True)
+                                else:
+                                    st.warning("Could not find a 'Category' or 'Product' column in the Sales file to create a breakdown.")
 
             with tab2:
                 st.subheader("All Employees Dataset")
