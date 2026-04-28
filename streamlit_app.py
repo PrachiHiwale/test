@@ -31,10 +31,6 @@ st.markdown("""
         color: #8e44ad; font-size: 1.1em; margin-top: 15px; margin-bottom: 10px; font-weight: bold;
         padding-left: 10px; border-left: 4px solid #9b59b6;
     }
-    /* Force right alignment as a fallback */
-    .stDataFrame [data-testid="stTable"] td:not(:first-child) {
-        text-align: right !important;
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -97,11 +93,6 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     cat_col = find_col(df_sales, ['CATEGORY', 'BRAND', 'LINE', 'PRODUCT GROUP', 'SEGMENT'])
     sku_col = find_col(df_sales, ['SKU', 'PRODUCT NAME', 'ITEM NAME', 'DESCRIPTION', 'MATERIAL'])
 
-    # Smart Geographic Columns Finder
-    reg_col = find_col(df_sales, ['REGION', 'ZONE'])
-    state_col = find_col(df_sales, ['STATE', 'PROVINCE'])
-    city_col = find_col(df_sales, ['CITY', 'TOWN', 'LOCATION'])
-
     date_sales = find_date_col(df_sales)
     date_att = find_date_col(df_attendance)
     date_cov = find_date_col(df_coverage)
@@ -116,7 +107,7 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     else:
         tsi_sales = df_sales.copy()
 
-    base_cols = [c for c in ['EMPLOYEE CHANNEL TYPE', emp_s, 'EMPLOYEE NAME', desig_col, city_col, state_col, reg_col, dist_col] if c and c in df_sales.columns]
+    base_cols = [c for c in ['EMPLOYEE CHANNEL TYPE', emp_s, 'EMPLOYEE NAME', desig_col, 'CITY', 'STATE', 'REGION', dist_col] if c and c in df_sales.columns]
     base = tsi_sales[base_cols].drop_duplicates(subset=[emp_s])
 
     user_cols = [c for c in [emp_u, 'STATUS', 'DATE OF JOINING', 'LEVEL3 EMPLOYEE NAME', 'LEVEL2 EMPLOYEE NAME'] if c and c in df_user.columns]
@@ -133,7 +124,11 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     master = master.fillna('')
     master['emp_s'] = emp_s
 
-    return master, df_sales, df_attendance, df_coverage, df_fulfill, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col, cat_col, sku_col, reg_col, state_col, city_col
+    # Standardize columns for filtering just in case they are missing
+    for c in ['REGION', 'STATE', 'CITY']:
+        if c not in master.columns: master[c] = "N/A"
+
+    return master, df_sales, df_attendance, df_coverage, df_fulfill, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col, cat_col, sku_col
 
 
 # ==========================================
@@ -152,53 +147,39 @@ f_ful = st.sidebar.file_uploader("6. Order Fulfillment", type=['xlsx'])
 if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
     with st.spinner("Processing data, please wait..."):
         try:
-            master_df, df_sales, df_att, df_cov, df_ful, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col, cat_col, sku_col, reg_col, state_col, city_col = process_data(f_sales, f_user, f_att, f_cov, f_cc, f_ful)
+            master_df, df_sales, df_att, df_cov, df_ful, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col, cat_col, sku_col = process_data(f_sales, f_user, f_att, f_cov, f_cc, f_ful)
 
-            # Strict Number Configurations for Right-Alignment
-            col_configs_L1 = {
-                "Mandays (MD)": st.column_config.NumberColumn(format="%d", help="Right Aligned"),
-                "Market Working (Billed)": st.column_config.NumberColumn(format="%d", help="Right Aligned"),
-                "Lines Billed (Categories)": st.column_config.NumberColumn(format="%d", help="Right Aligned"),
-                "Performance (Sales ₹)": st.column_config.NumberColumn(format="₹ %,.0f", help="Right Aligned"),
-                "Order Fullfilment (₹)": st.column_config.NumberColumn(format="₹ %,.0f", help="Right Aligned")
-            }
+            # Common Number Configs for Right Alignment & Currency Formatting
+            currency_format = st.column_config.NumberColumn(format="₹ %,.0f")
+            qty_format = st.column_config.NumberColumn(format="%,.1f")
+            int_format = st.column_config.NumberColumn(format="%d")
 
             tab1, tab2 = st.tabs(["👤 Employee Profile (Interactive)", "📊 Overall Summary Data"])
 
             with tab1:
                 # ==========================================
-                # CASCADING FILTERS - High Visibility Area
+                # CASCADING FILTERS (REGION -> STATE -> CITY -> EMP)
                 # ==========================================
-                with st.expander("🔍 **Dashboard Filters (Region > State > City > Employee)**", expanded=True):
-                    f_col1, f_col2, f_col3, f_col4 = st.columns(4)
-                    
-                    # Ensure safe fallbacks if columns aren't found
-                    safe_reg = reg_col if reg_col else 'REGION'
-                    safe_state = state_col if state_col else 'STATE'
-                    safe_city = city_col if city_col else 'CITY'
+                f_col1, f_col2, f_col3, f_col4 = st.columns(4)
+                
+                with f_col1:
+                    regions = ["All"] + sorted([str(x) for x in master_df['REGION'].unique() if str(x).strip() != ''])
+                    sel_region = st.selectbox("🌍 Filter Region:", regions)
+                filtered_df = master_df if sel_region == "All" else master_df[master_df['REGION'] == sel_region]
 
-                    # Add empty columns if they don't exist yet
-                    for col in [safe_reg, safe_state, safe_city]:
-                        if col not in master_df.columns: master_df[col] = "N/A"
+                with f_col2:
+                    states = ["All"] + sorted([str(x) for x in filtered_df['STATE'].unique() if str(x).strip() != ''])
+                    sel_state = st.selectbox("📍 Filter State:", states)
+                filtered_df = filtered_df if sel_state == "All" else filtered_df[filtered_df['STATE'] == sel_state]
 
-                    with f_col1:
-                        regions = ["All"] + sorted([str(x) for x in master_df[safe_reg].unique() if str(x).strip() != ''])
-                        sel_region = st.selectbox("🌍 Select Region:", regions)
-                    filtered_df = master_df if sel_region == "All" else master_df[master_df[safe_reg] == sel_region]
+                with f_col3:
+                    cities = ["All"] + sorted([str(x) for x in filtered_df['CITY'].unique() if str(x).strip() != ''])
+                    sel_city = st.selectbox("🏢 Filter City:", cities)
+                filtered_df = filtered_df if sel_city == "All" else filtered_df[filtered_df['CITY'] == sel_city]
 
-                    with f_col2:
-                        states = ["All"] + sorted([str(x) for x in filtered_df[safe_state].unique() if str(x).strip() != ''])
-                        sel_state = st.selectbox("📍 Select State:", states)
-                    filtered_df = filtered_df if sel_state == "All" else filtered_df[filtered_df[safe_state] == sel_state]
-
-                    with f_col3:
-                        cities = ["All"] + sorted([str(x) for x in filtered_df[safe_city].unique() if str(x).strip() != ''])
-                        sel_city = st.selectbox("🏢 Select City:", cities)
-                    filtered_df = filtered_df if sel_city == "All" else filtered_df[filtered_df[safe_city] == sel_city]
-
-                    with f_col4:
-                        emp_list = filtered_df['EMPLOYEE NAME'].unique().tolist()
-                        selected_emp = st.selectbox("👤 Select Employee:", sorted([x for x in emp_list if str(x).strip() != '']))
+                with f_col4:
+                    emp_list = filtered_df['EMPLOYEE NAME'].unique().tolist()
+                    selected_emp = st.selectbox("👤 Select Employee:", sorted([x for x in emp_list if str(x).strip() != '']))
 
                 if selected_emp:
                     emp_data = master_df[master_df['EMPLOYEE NAME'] == selected_emp].iloc[0]
@@ -219,7 +200,7 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                                 <td><b>Status:</b> {emp_data.get('STATUS', 'N/A')}</td>
                             </tr>
                             <tr>
-                                <td><b>City/State:</b> {emp_data.get(safe_city, '')}, {emp_data.get(safe_state, '')}</td>
+                                <td><b>City/State:</b> {emp_data.get('CITY', '')}, {emp_data.get('STATE', '')}</td>
                                 <td><b>Channel:</b> {emp_data.get('EMPLOYEE CHANNEL TYPE', 'N/A')}</td>
                                 <td><b>SS Name:</b> {emp_data.get('LEVEL3 EMPLOYEE NAME', 'N/A')}</td>
                             </tr>
@@ -251,8 +232,8 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
 
                         total_md = 0
                         total_mw_billed = 0
-                        total_perf_sales = 0.0
-                        total_full_val = 0.0
+                        total_perf_sales = 0
+                        total_full_val = 0
 
                         for m in months:
                             md_val = 0
@@ -279,14 +260,15 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                             timeline_name = f"M{m_counter} ({m})"
                             monthly_records.append({
                                 "Timeline": timeline_name,
-                                "Mandays (MD)": int(md_val),
-                                "Market Working (Billed)": int(mw_billed),
-                                "Lines Billed (Categories)": int(lines_billed),
-                                "Performance (Sales ₹)": float(perf_sales),
-                                "Order Fullfilment (₹)": float(full_val)
+                                "Mandays (MD)": md_val,
+                                "Market Working (Billed)": mw_billed,
+                                "Lines Billed (Categories)": lines_billed,
+                                "Performance (Sales ₹)": perf_sales,
+                                "Order Fullfilment (₹)": full_val
                             })
                             
                             drill_down_data[timeline_name] = {'m_sales': m_sales, 'md_val': md_val}
+                            
                             total_md += md_val
                             total_mw_billed += mw_billed
                             total_perf_sales += perf_sales
@@ -296,17 +278,24 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                         total_lines_billed = int(emp_sales[cat_col].nunique()) if cat_col else 0
                         monthly_records.insert(0, {
                             "Timeline": "Total / All Months",
-                            "Mandays (MD)": int(total_md),
-                            "Market Working (Billed)": int(total_mw_billed),
-                            "Lines Billed (Categories)": int(total_lines_billed),
-                            "Performance (Sales ₹)": float(total_perf_sales),
-                            "Order Fullfilment (₹)": float(total_full_val)
+                            "Mandays (MD)": total_md,
+                            "Market Working (Billed)": total_mw_billed,
+                            "Lines Billed (Categories)": total_lines_billed,
+                            "Performance (Sales ₹)": total_perf_sales,
+                            "Order Fullfilment (₹)": total_full_val
                         })
                         drill_down_data["Total / All Months"] = {'m_sales': emp_sales, 'md_val': total_md}
 
-                        # Render Level 1 Table
                         df_trend = pd.DataFrame(monthly_records)
                         
+                        col_configs_L1 = {
+                            "Mandays (MD)": int_format,
+                            "Market Working (Billed)": int_format,
+                            "Lines Billed (Categories)": int_format,
+                            "Performance (Sales ₹)": currency_format,
+                            "Order Fullfilment (₹)": currency_format
+                        }
+
                         selected_timeline = None
                         try:
                             event_1 = st.dataframe(df_trend, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", column_config=col_configs_L1)
@@ -351,20 +340,21 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
 
                                         detail_list.append({
                                             "Category (Line)": name,
-                                            "Billed Stores": int(stores_billed),
-                                            "Types of Products Sold": int(types_of_products),
-                                            "Total Sales Value": float(cat_sales_val),
-                                            "Qty Sold": float(cat_qty),
-                                            "Order Fulfillment": float(cat_full_val)
+                                            "Billed Stores": stores_billed,
+                                            "Types of Products Sold": types_of_products,
+                                            "Total Sales Value": cat_sales_val,
+                                            "Qty Sold": cat_qty,
+                                            "Order Fulfillment": cat_full_val
                                         })
                                     
                                     df_detail = pd.DataFrame(detail_list)
+                                    
                                     col_configs_L2 = {
-                                        "Billed Stores": st.column_config.NumberColumn(format="%d"),
-                                        "Types of Products Sold": st.column_config.NumberColumn(format="%d"),
-                                        "Total Sales Value": st.column_config.NumberColumn(format="₹ %,.0f"),
-                                        "Qty Sold": st.column_config.NumberColumn(format="%,.1f"),
-                                        "Order Fulfillment": st.column_config.NumberColumn(format="₹ %,.0f")
+                                        "Billed Stores": int_format,
+                                        "Types of Products Sold": int_format,
+                                        "Total Sales Value": currency_format,
+                                        "Qty Sold": qty_format,
+                                        "Order Fulfillment": currency_format
                                     }
 
                                     selected_category = None
@@ -402,19 +392,21 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                                                         sku_full_val = float((pd.to_numeric(s_merged[price_col], errors='coerce').fillna(0) * pd.to_numeric(s_merged[signoff_col], errors='coerce').fillna(0)).sum())
                                                 
                                                 product_list.append({
+                                                    "Timeline": selected_timeline,
+                                                    "Category": selected_category,
                                                     "Product Name": sku_name,
-                                                    "Billed Stores": int(sku_billed),
-                                                    "Qty Sold": float(sku_qty),
-                                                    "Total Sales Value": float(sku_sales_val),
-                                                    "Order Fulfillment": float(sku_full_val)
+                                                    "Billed Stores": sku_billed,
+                                                    "Qty Sold": sku_qty,
+                                                    "Total Sales Value": sku_sales_val,
+                                                    "Order Fulfillment": sku_full_val
                                                 })
                                             
                                             df_product = pd.DataFrame(product_list)
                                             col_configs_L3 = {
-                                                "Billed Stores": st.column_config.NumberColumn(format="%d"),
-                                                "Qty Sold": st.column_config.NumberColumn(format="%,.1f"),
-                                                "Total Sales Value": st.column_config.NumberColumn(format="₹ %,.0f"),
-                                                "Order Fulfillment": st.column_config.NumberColumn(format="₹ %,.0f")
+                                                "Billed Stores": int_format,
+                                                "Qty Sold": qty_format,
+                                                "Total Sales Value": currency_format,
+                                                "Order Fulfillment": currency_format
                                             }
                                             st.dataframe(df_product, use_container_width=True, hide_index=True, column_config=col_configs_L3)
                                         else:
