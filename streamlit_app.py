@@ -31,6 +31,10 @@ st.markdown("""
         color: #8e44ad; font-size: 1.1em; margin-top: 15px; margin-bottom: 10px; font-weight: bold;
         padding-left: 10px; border-left: 4px solid #9b59b6;
     }
+    /* Force right alignment as a fallback */
+    .stDataFrame [data-testid="stTable"] td:not(:first-child) {
+        text-align: right !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -90,9 +94,13 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     col_visited = find_col(df_coverage, ['VISITED', 'VISIT'])
     col_billed = find_col(df_coverage, ['BILLED', 'BILL'])
 
-    # Category and SKU for drill-downs
     cat_col = find_col(df_sales, ['CATEGORY', 'BRAND', 'LINE', 'PRODUCT GROUP', 'SEGMENT'])
     sku_col = find_col(df_sales, ['SKU', 'PRODUCT NAME', 'ITEM NAME', 'DESCRIPTION', 'MATERIAL'])
+
+    # Smart Geographic Columns Finder
+    reg_col = find_col(df_sales, ['REGION', 'ZONE'])
+    state_col = find_col(df_sales, ['STATE', 'PROVINCE'])
+    city_col = find_col(df_sales, ['CITY', 'TOWN', 'LOCATION'])
 
     date_sales = find_date_col(df_sales)
     date_att = find_date_col(df_attendance)
@@ -108,7 +116,7 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     else:
         tsi_sales = df_sales.copy()
 
-    base_cols = [c for c in ['EMPLOYEE CHANNEL TYPE', emp_s, 'EMPLOYEE NAME', desig_col, 'CITY', 'STATE', 'REGION', dist_col] if c and c in df_sales.columns]
+    base_cols = [c for c in ['EMPLOYEE CHANNEL TYPE', emp_s, 'EMPLOYEE NAME', desig_col, city_col, state_col, reg_col, dist_col] if c and c in df_sales.columns]
     base = tsi_sales[base_cols].drop_duplicates(subset=[emp_s])
 
     user_cols = [c for c in [emp_u, 'STATUS', 'DATE OF JOINING', 'LEVEL3 EMPLOYEE NAME', 'LEVEL2 EMPLOYEE NAME'] if c and c in df_user.columns]
@@ -125,7 +133,7 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     master = master.fillna('')
     master['emp_s'] = emp_s
 
-    return master, df_sales, df_attendance, df_coverage, df_fulfill, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col, cat_col, sku_col
+    return master, df_sales, df_attendance, df_coverage, df_fulfill, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col, cat_col, sku_col, reg_col, state_col, city_col
 
 
 # ==========================================
@@ -144,15 +152,53 @@ f_ful = st.sidebar.file_uploader("6. Order Fulfillment", type=['xlsx'])
 if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
     with st.spinner("Processing data, please wait..."):
         try:
-            master_df, df_sales, df_att, df_cov, df_ful, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col, cat_col, sku_col = process_data(f_sales, f_user, f_att, f_cov, f_cc, f_ful)
+            master_df, df_sales, df_att, df_cov, df_ful, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col, cat_col, sku_col, reg_col, state_col, city_col = process_data(f_sales, f_user, f_att, f_cov, f_cc, f_ful)
+
+            # Strict Number Configurations for Right-Alignment
+            col_configs_L1 = {
+                "Mandays (MD)": st.column_config.NumberColumn(format="%d", help="Right Aligned"),
+                "Market Working (Billed)": st.column_config.NumberColumn(format="%d", help="Right Aligned"),
+                "Lines Billed (Categories)": st.column_config.NumberColumn(format="%d", help="Right Aligned"),
+                "Performance (Sales ₹)": st.column_config.NumberColumn(format="₹ %,.0f", help="Right Aligned"),
+                "Order Fullfilment (₹)": st.column_config.NumberColumn(format="₹ %,.0f", help="Right Aligned")
+            }
 
             tab1, tab2 = st.tabs(["👤 Employee Profile (Interactive)", "📊 Overall Summary Data"])
 
             with tab1:
-                col_sel, _ = st.columns([1, 2])
-                with col_sel:
-                    emp_list = master_df['EMPLOYEE NAME'].unique().tolist()
-                    selected_emp = st.selectbox("Search / Select Employee:", sorted([x for x in emp_list if str(x).strip() != '']))
+                # ==========================================
+                # CASCADING FILTERS - High Visibility Area
+                # ==========================================
+                with st.expander("🔍 **Dashboard Filters (Region > State > City > Employee)**", expanded=True):
+                    f_col1, f_col2, f_col3, f_col4 = st.columns(4)
+                    
+                    # Ensure safe fallbacks if columns aren't found
+                    safe_reg = reg_col if reg_col else 'REGION'
+                    safe_state = state_col if state_col else 'STATE'
+                    safe_city = city_col if city_col else 'CITY'
+
+                    # Add empty columns if they don't exist yet
+                    for col in [safe_reg, safe_state, safe_city]:
+                        if col not in master_df.columns: master_df[col] = "N/A"
+
+                    with f_col1:
+                        regions = ["All"] + sorted([str(x) for x in master_df[safe_reg].unique() if str(x).strip() != ''])
+                        sel_region = st.selectbox("🌍 Select Region:", regions)
+                    filtered_df = master_df if sel_region == "All" else master_df[master_df[safe_reg] == sel_region]
+
+                    with f_col2:
+                        states = ["All"] + sorted([str(x) for x in filtered_df[safe_state].unique() if str(x).strip() != ''])
+                        sel_state = st.selectbox("📍 Select State:", states)
+                    filtered_df = filtered_df if sel_state == "All" else filtered_df[filtered_df[safe_state] == sel_state]
+
+                    with f_col3:
+                        cities = ["All"] + sorted([str(x) for x in filtered_df[safe_city].unique() if str(x).strip() != ''])
+                        sel_city = st.selectbox("🏢 Select City:", cities)
+                    filtered_df = filtered_df if sel_city == "All" else filtered_df[filtered_df[safe_city] == sel_city]
+
+                    with f_col4:
+                        emp_list = filtered_df['EMPLOYEE NAME'].unique().tolist()
+                        selected_emp = st.selectbox("👤 Select Employee:", sorted([x for x in emp_list if str(x).strip() != '']))
 
                 if selected_emp:
                     emp_data = master_df[master_df['EMPLOYEE NAME'] == selected_emp].iloc[0]
@@ -173,7 +219,7 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                                 <td><b>Status:</b> {emp_data.get('STATUS', 'N/A')}</td>
                             </tr>
                             <tr>
-                                <td><b>City/State:</b> {emp_data.get('CITY', '')}, {emp_data.get('STATE', '')}</td>
+                                <td><b>City/State:</b> {emp_data.get(safe_city, '')}, {emp_data.get(safe_state, '')}</td>
                                 <td><b>Channel:</b> {emp_data.get('EMPLOYEE CHANNEL TYPE', 'N/A')}</td>
                                 <td><b>SS Name:</b> {emp_data.get('LEVEL3 EMPLOYEE NAME', 'N/A')}</td>
                             </tr>
@@ -203,11 +249,10 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                         
                         price_lookup = df_sales[[ticket_s, price_col]].drop_duplicates(subset=[ticket_s]) if ticket_s else None
 
-                        # --- VARIABLES TO CALCULATE "ALL MONTHS" TOTAL ---
                         total_md = 0
                         total_mw_billed = 0
-                        total_perf_sales = 0
-                        total_full_val = 0
+                        total_perf_sales = 0.0
+                        total_full_val = 0.0
 
                         for m in months:
                             md_val = 0
@@ -221,59 +266,54 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                                 mw_billed = m_cov[col_billed].sum() if col_billed else 0
 
                             m_sales = emp_sales[emp_sales['Month'] == m]
-                            perf_sales = m_sales[sales_val_col].sum() if sales_val_col else 0
-                            lines_billed = m_sales[cat_col].nunique() if cat_col else 0
+                            perf_sales = float(m_sales[sales_val_col].sum()) if sales_val_col else 0.0
+                            lines_billed = int(m_sales[cat_col].nunique()) if cat_col else 0
 
-                            full_val = 0
+                            full_val = 0.0
                             if ticket_s and ticket_f and signoff_col and price_lookup is not None:
                                 m_tickets = m_sales[ticket_s].dropna()
                                 m_ful = df_ful[df_ful[ticket_f].isin(m_tickets)]
                                 merged_f = pd.merge(m_ful, price_lookup, left_on=ticket_f, right_on=ticket_s, how='left')
-                                full_val = (pd.to_numeric(merged_f[price_col], errors='coerce').fillna(0) * pd.to_numeric(merged_f[signoff_col], errors='coerce').fillna(0)).sum()
+                                full_val = float((pd.to_numeric(merged_f[price_col], errors='coerce').fillna(0) * pd.to_numeric(merged_f[signoff_col], errors='coerce').fillna(0)).sum())
 
                             timeline_name = f"M{m_counter} ({m})"
                             monthly_records.append({
                                 "Timeline": timeline_name,
-                                "Mandays (MD)": md_val,
-                                "Market Working (Billed)": mw_billed,
-                                "Lines Billed (Categories)": lines_billed,
-                                "Performance (Sales ₹)": f"₹ {perf_sales:,.0f}",
-                                "Order Fullfilment (₹)": f"₹ {full_val:,.0f}"
+                                "Mandays (MD)": int(md_val),
+                                "Market Working (Billed)": int(mw_billed),
+                                "Lines Billed (Categories)": int(lines_billed),
+                                "Performance (Sales ₹)": float(perf_sales),
+                                "Order Fullfilment (₹)": float(full_val)
                             })
                             
                             drill_down_data[timeline_name] = {'m_sales': m_sales, 'md_val': md_val}
-                            
-                            # Add to totals
                             total_md += md_val
                             total_mw_billed += mw_billed
                             total_perf_sales += perf_sales
                             total_full_val += full_val
                             m_counter += 1
 
-                        # --- CREATE "ALL MONTHS" RECORD ---
-                        total_lines_billed = emp_sales[cat_col].nunique() if cat_col else 0
+                        total_lines_billed = int(emp_sales[cat_col].nunique()) if cat_col else 0
                         monthly_records.insert(0, {
                             "Timeline": "Total / All Months",
-                            "Mandays (MD)": total_md,
-                            "Market Working (Billed)": total_mw_billed,
-                            "Lines Billed (Categories)": total_lines_billed,
-                            "Performance (Sales ₹)": f"₹ {total_perf_sales:,.0f}",
-                            "Order Fullfilment (₹)": f"₹ {total_full_val:,.0f}"
+                            "Mandays (MD)": int(total_md),
+                            "Market Working (Billed)": int(total_mw_billed),
+                            "Lines Billed (Categories)": int(total_lines_billed),
+                            "Performance (Sales ₹)": float(total_perf_sales),
+                            "Order Fullfilment (₹)": float(total_full_val)
                         })
                         drill_down_data["Total / All Months"] = {'m_sales': emp_sales, 'md_val': total_md}
 
                         # Render Level 1 Table
                         df_trend = pd.DataFrame(monthly_records)
-                        selected_timeline = None
                         
+                        selected_timeline = None
                         try:
-                            # Streamlit >= 1.35 Clickable Dataframe
-                            event_1 = st.dataframe(df_trend, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+                            event_1 = st.dataframe(df_trend, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", column_config=col_configs_L1)
                             if len(event_1.selection.rows) > 0:
                                 selected_timeline = df_trend.iloc[event_1.selection.rows[0]]['Timeline']
                         except TypeError:
-                            # Fallback
-                            st.dataframe(df_trend, use_container_width=True, hide_index=True)
+                            st.dataframe(df_trend, use_container_width=True, hide_index=True, column_config=col_configs_L1)
                             selected_timeline = st.selectbox("Select Timeline:", df_trend['Timeline'].tolist())
 
                         # ==========================================
@@ -296,38 +336,44 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                                     grouped = m_sales.groupby(grouping_col)
                                     
                                     for name, group in grouped:
-                                        types_of_products = group[sku_col].nunique() if sku_col else len(group)
-                                        stores_billed = group[ticket_s].nunique() if ticket_s else 0
-                                        cat_sales_val = group[sales_val_col].sum() if sales_val_col else 0
-                                        cat_qty = group[qty_case_col].sum() if qty_case_col else 0
+                                        types_of_products = int(group[sku_col].nunique()) if sku_col else len(group)
+                                        stores_billed = int(group[ticket_s].nunique()) if ticket_s else 0
+                                        cat_sales_val = float(group[sales_val_col].sum()) if sales_val_col else 0.0
+                                        cat_qty = float(group[qty_case_col].sum()) if qty_case_col else 0.0
                                         
-                                        cat_full_val = 0
+                                        cat_full_val = 0.0
                                         if ticket_s and ticket_f and signoff_col and price_lookup is not None:
                                             cat_tickets = group[ticket_s].dropna()
                                             cat_ful = df_ful[df_ful[ticket_f].isin(cat_tickets)]
                                             if not cat_ful.empty:
                                                 c_merged = pd.merge(cat_ful, price_lookup, left_on=ticket_f, right_on=ticket_s, how='left')
-                                                cat_full_val = (pd.to_numeric(c_merged[price_col], errors='coerce').fillna(0) * pd.to_numeric(c_merged[signoff_col], errors='coerce').fillna(0)).sum()
+                                                cat_full_val = float((pd.to_numeric(c_merged[price_col], errors='coerce').fillna(0) * pd.to_numeric(c_merged[signoff_col], errors='coerce').fillna(0)).sum())
 
                                         detail_list.append({
                                             "Category (Line)": name,
-                                            "Billed Stores": stores_billed,
-                                            "Types of Products Sold": types_of_products,
-                                            "Total Sales Value": f"₹ {cat_sales_val:,.0f}",
-                                            "Qty Sold": f"{cat_qty:,.1f}",
-                                            "Order Fulfillment": f"₹ {cat_full_val:,.0f}"
+                                            "Billed Stores": int(stores_billed),
+                                            "Types of Products Sold": int(types_of_products),
+                                            "Total Sales Value": float(cat_sales_val),
+                                            "Qty Sold": float(cat_qty),
+                                            "Order Fulfillment": float(cat_full_val)
                                         })
                                     
                                     df_detail = pd.DataFrame(detail_list)
+                                    col_configs_L2 = {
+                                        "Billed Stores": st.column_config.NumberColumn(format="%d"),
+                                        "Types of Products Sold": st.column_config.NumberColumn(format="%d"),
+                                        "Total Sales Value": st.column_config.NumberColumn(format="₹ %,.0f"),
+                                        "Qty Sold": st.column_config.NumberColumn(format="%,.1f"),
+                                        "Order Fulfillment": st.column_config.NumberColumn(format="₹ %,.0f")
+                                    }
+
                                     selected_category = None
-                                    
                                     try:
-                                        # Render Clickable Category Table
-                                        event_2 = st.dataframe(df_detail, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+                                        event_2 = st.dataframe(df_detail, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", column_config=col_configs_L2)
                                         if len(event_2.selection.rows) > 0:
                                             selected_category = df_detail.iloc[event_2.selection.rows[0]]['Category (Line)']
                                     except TypeError:
-                                        st.dataframe(df_detail, use_container_width=True, hide_index=True)
+                                        st.dataframe(df_detail, use_container_width=True, hide_index=True, column_config=col_configs_L2)
                                         selected_category = st.selectbox("Select Category:", df_detail['Category (Line)'].tolist())
 
                                     # ==========================================
@@ -336,7 +382,6 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                                     if selected_category:
                                         st.markdown(f"<div class='drilldown-header-sku'>📦 Product Breakdown for: {selected_category} ({selected_timeline})</div>", unsafe_allow_html=True)
                                         
-                                        # Filter sales for just this category
                                         cat_sales = m_sales[m_sales[grouping_col] == selected_category]
                                         
                                         product_list = []
@@ -344,30 +389,34 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                                             sku_grouped = cat_sales.groupby(sku_col)
                                             
                                             for sku_name, s_group in sku_grouped:
-                                                sku_billed = s_group[ticket_s].nunique() if ticket_s else 0
-                                                sku_sales_val = s_group[sales_val_col].sum() if sales_val_col else 0
-                                                sku_qty = s_group[qty_case_col].sum() if qty_case_col else 0
+                                                sku_billed = int(s_group[ticket_s].nunique()) if ticket_s else 0
+                                                sku_sales_val = float(s_group[sales_val_col].sum()) if sales_val_col else 0.0
+                                                sku_qty = float(s_group[qty_case_col].sum()) if qty_case_col else 0.0
                                                 
-                                                sku_full_val = 0
+                                                sku_full_val = 0.0
                                                 if ticket_s and ticket_f and signoff_col and price_lookup is not None:
                                                     sku_tickets = s_group[ticket_s].dropna()
                                                     sku_ful = df_ful[df_ful[ticket_f].isin(sku_tickets)]
                                                     if not sku_ful.empty:
                                                         s_merged = pd.merge(sku_ful, price_lookup, left_on=ticket_f, right_on=ticket_s, how='left')
-                                                        sku_full_val = (pd.to_numeric(s_merged[price_col], errors='coerce').fillna(0) * pd.to_numeric(s_merged[signoff_col], errors='coerce').fillna(0)).sum()
+                                                        sku_full_val = float((pd.to_numeric(s_merged[price_col], errors='coerce').fillna(0) * pd.to_numeric(s_merged[signoff_col], errors='coerce').fillna(0)).sum())
                                                 
                                                 product_list.append({
-                                                    "Timeline": selected_timeline,
-                                                    "Category": selected_category,
                                                     "Product Name": sku_name,
-                                                    "Billed Stores": sku_billed,
-                                                    "Qty Sold": f"{sku_qty:,.1f}",
-                                                    "Total Sales Value": f"₹ {sku_sales_val:,.0f}",
-                                                    "Order Fulfillment": f"₹ {sku_full_val:,.0f}"
+                                                    "Billed Stores": int(sku_billed),
+                                                    "Qty Sold": float(sku_qty),
+                                                    "Total Sales Value": float(sku_sales_val),
+                                                    "Order Fulfillment": float(sku_full_val)
                                                 })
                                             
                                             df_product = pd.DataFrame(product_list)
-                                            st.dataframe(df_product, use_container_width=True, hide_index=True)
+                                            col_configs_L3 = {
+                                                "Billed Stores": st.column_config.NumberColumn(format="%d"),
+                                                "Qty Sold": st.column_config.NumberColumn(format="%,.1f"),
+                                                "Total Sales Value": st.column_config.NumberColumn(format="₹ %,.0f"),
+                                                "Order Fulfillment": st.column_config.NumberColumn(format="₹ %,.0f")
+                                            }
+                                            st.dataframe(df_product, use_container_width=True, hide_index=True, column_config=col_configs_L3)
                                         else:
                                             st.warning("No Product/SKU column found to generate this view.")
 
