@@ -93,7 +93,6 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     col_visited = find_col(df_coverage, ['VISITED', 'VISIT'])
     col_billed = find_col(df_coverage, ['BILLED', 'BILL'])
 
-    # Find Brand, Category, SKU, and Store/Outlet ID
     brand_col = find_col(df_sales, ['BRAND'])
     cat_col = find_col(df_sales, ['CATEGORY', 'SEGMENT', 'PRODUCT GROUP', 'LINE'])
     sku_col = find_col(df_sales, ['SKU', 'PRODUCT NAME', 'ITEM NAME', 'DESCRIPTION', 'MATERIAL'])
@@ -282,13 +281,14 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                             full_val = float((pd.to_numeric(merged_f[price_col], errors='coerce').fillna(0) * pd.to_numeric(merged_f[signoff_col], errors='coerce').fillna(0)).sum())
 
                         timeline_name = f"M{m_counter} ({m})"
+                        
+                        # REMOVED: "Total Bills (Invoices)" from the dictionary so it doesn't show in UI.
                         monthly_records.append({
                             "Timeline": timeline_name,
                             "Mandays (MD)": md_val,
                             "Market Working (Visited)": mw_visited,
                             "Market Working (Billed)": mw_billed,
                             "Unique Billed Outlets": unique_outlets,
-                            "Total Bills (Invoices)": total_bills,
                             "Total Lines Sold": total_lines,
                             "Avg Line Billed": avg_line_billed,
                             "Brands Sold": brands_sold,
@@ -319,7 +319,6 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                         "Market Working (Visited)": total_mw_visited,
                         "Market Working (Billed)": total_mw_billed,
                         "Unique Billed Outlets": total_outlets_all,
-                        "Total Bills (Invoices)": total_bills_all,
                         "Total Lines Sold": total_lines_all,
                         "Avg Line Billed": avg_line_all,
                         "Brands Sold": total_brands_all,
@@ -336,7 +335,6 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                     df_trend["Market Working (Visited)"] = pd.to_numeric(df_trend["Market Working (Visited)"])
                     df_trend["Market Working (Billed)"] = pd.to_numeric(df_trend["Market Working (Billed)"])
                     df_trend["Unique Billed Outlets"] = pd.to_numeric(df_trend["Unique Billed Outlets"])
-                    df_trend["Total Bills (Invoices)"] = pd.to_numeric(df_trend["Total Bills (Invoices)"])
                     df_trend["Total Lines Sold"] = pd.to_numeric(df_trend["Total Lines Sold"])
                     df_trend["Avg Line Billed"] = pd.to_numeric(df_trend["Avg Line Billed"])
                     df_trend["Brands Sold"] = pd.to_numeric(df_trend["Brands Sold"])
@@ -349,7 +347,6 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                         "Market Working (Visited)": int_format,
                         "Market Working (Billed)": int_format,
                         "Unique Billed Outlets": int_format,
-                        "Total Bills (Invoices)": int_format,
                         "Total Lines Sold": int_format,
                         "Avg Line Billed": st.column_config.NumberColumn(format="%.2f"),
                         "Brands Sold": int_format,
@@ -388,7 +385,7 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                                 
                                 for name, group in grouped:
                                     types_of_products = int(group[sku_col].nunique()) if sku_col else len(group)
-                                    stores_billed = int(group[ticket_s].nunique()) if ticket_s else 0
+                                    stores_billed = int(group[store_col].nunique()) if store_col else int(group[ticket_s].nunique()) # Changed to Store count
                                     cat_sales_val = float(group[sales_val_col].sum()) if sales_val_col else 0.0
                                     cat_qty = float(group[qty_case_col].sum()) if qty_case_col else 0.0
                                     
@@ -447,7 +444,7 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                                         sku_grouped = cat_sales.groupby(sku_col)
                                         
                                         for sku_name, s_group in sku_grouped:
-                                            sku_billed = int(s_group[ticket_s].nunique()) if ticket_s else 0
+                                            sku_billed = int(s_group[store_col].nunique()) if store_col else int(s_group[ticket_s].nunique())
                                             sku_sales_val = float(s_group[sales_val_col].sum()) if sales_val_col else 0.0
                                             sku_qty = float(s_group[qty_case_col].sum()) if qty_case_col else 0.0
                                             
