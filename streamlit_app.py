@@ -93,7 +93,6 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     col_visited = find_col(df_coverage, ['VISITED', 'VISIT'])
     col_billed = find_col(df_coverage, ['BILLED', 'BILL'])
 
-    # Separation of Brand vs Category
     brand_col = find_col(df_sales, ['BRAND'])
     cat_col = find_col(df_sales, ['CATEGORY', 'SEGMENT', 'PRODUCT GROUP', 'LINE'])
     sku_col = find_col(df_sales, ['SKU', 'PRODUCT NAME', 'ITEM NAME', 'DESCRIPTION', 'MATERIAL'])
@@ -112,18 +111,21 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     else:
         tsi_sales = df_sales.copy()
 
-    # Merge EVERYTHING first to ensure we don't lose Region/State/City
+    # Merge EVERYTHING first
     base = tsi_sales.drop_duplicates(subset=[emp_s])
     master = pd.merge(base, df_user, left_on=emp_s, right_on=emp_u, how='left')
 
-    # Now intelligently find geographic columns across the newly merged master data
+    # Smart Columns Finder for UI
     reg_col = find_col(master, ['REGION', 'ZONE'])
     state_col = find_col(master, ['STATE', 'PROVINCE'])
     city_col = find_col(master, ['CITY', 'TOWN', 'LOCATION'])
+    emp_name_col = find_col(master, ['EMPLOYEE NAME', 'EMP NAME', 'USER NAME', 'NAME', 'FULL NAME'])
 
+    # Bulletproof Fallbacks
     if not reg_col: master['REGION'] = "N/A"; reg_col = 'REGION'
     if not state_col: master['STATE'] = "N/A"; state_col = 'STATE'
     if not city_col: master['CITY'] = "N/A"; city_col = 'CITY'
+    if not emp_name_col: master['EMPLOYEE NAME'] = master[emp_s]; emp_name_col = 'EMPLOYEE NAME'
 
     df_sales[sales_val_col] = pd.to_numeric(df_sales[sales_val_col], errors='coerce').fillna(0)
     df_sales[qty_case_col] = pd.to_numeric(df_sales[qty_case_col], errors='coerce').fillna(0)
@@ -135,7 +137,7 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     master = master.fillna('')
     master['emp_s'] = emp_s
 
-    return master, df_sales, df_attendance, df_coverage, df_fulfill, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col, cat_col, brand_col, sku_col, reg_col, state_col, city_col
+    return master, df_sales, df_attendance, df_coverage, df_fulfill, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col, cat_col, brand_col, sku_col, reg_col, state_col, city_col, emp_name_col, desig_col
 
 
 # ==========================================
@@ -154,9 +156,8 @@ f_ful = st.sidebar.file_uploader("6. Order Fulfillment", type=['xlsx'])
 if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
     with st.spinner("Processing data, please wait..."):
         try:
-            master_df, df_sales, df_att, df_cov, df_ful, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col, cat_col, brand_col, sku_col, reg_col, state_col, city_col = process_data(f_sales, f_user, f_att, f_cov, f_cc, f_ful)
+            master_df, df_sales, df_att, df_cov, df_ful, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col, cat_col, brand_col, sku_col, reg_col, state_col, city_col, emp_name_col, desig_col = process_data(f_sales, f_user, f_att, f_cov, f_cc, f_ful)
 
-            # Common Number Configs
             currency_format = st.column_config.NumberColumn(format="₹ %,.0f")
             qty_format = st.column_config.NumberColumn(format="%,.1f")
             int_format = st.column_config.NumberColumn(format="%d")
@@ -164,7 +165,6 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
             # ==========================================
             # CASCADING FILTERS 
             # ==========================================
-            st.markdown("### 👤 Employee Profile (Interactive)")
             f_col1, f_col2, f_col3, f_col4 = st.columns(4)
             
             with f_col1:
@@ -183,31 +183,38 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
             filtered_df = filtered_df if sel_city == "All" else filtered_df[filtered_df[city_col].astype(str) == sel_city]
 
             with f_col4:
-                emp_list = filtered_df['EMPLOYEE NAME'].unique().tolist()
-                selected_emp = st.selectbox("👤 Select Employee:", sorted([x for x in emp_list if str(x).strip() != '']))
+                emp_list = filtered_df[emp_name_col].unique().tolist()
+                selected_emp = st.selectbox("👤 Select Employee:", sorted([str(x) for x in emp_list if str(x).strip() not in ['', 'nan', 'N/A']]))
 
             if selected_emp:
-                emp_data = master_df[master_df['EMPLOYEE NAME'] == selected_emp].iloc[0]
+                emp_data = master_df[master_df[emp_name_col] == selected_emp].iloc[0]
                 emp_id_val = emp_data[emp_s]
+
+                # Smart fallback for Profile Card details
+                safe_doj = find_col(master_df, ['JOINING', 'DOJ', 'DATE OF JOIN']) or 'DATE OF JOINING'
+                safe_sup = find_col(master_df, ['SUPERVISOR', 'LEVEL2', 'L2']) or 'LEVEL2 EMPLOYEE NAME'
+                safe_ss = find_col(master_df, ['SS NAME', 'LEVEL3', 'L3']) or 'LEVEL3 EMPLOYEE NAME'
+                safe_chan = find_col(master_df, ['CHANNEL']) or 'EMPLOYEE CHANNEL TYPE'
+                safe_stat = find_col(master_df, ['STATUS', 'ACTIVE']) or 'STATUS'
 
                 st.markdown(f"""
                 <div class="profile-card">
                     <h3 style='margin-top:0px;'>About Employee</h3>
                     <table style='width:100%; border:none; text-align:left;'>
                         <tr>
-                            <td><b>Employee Name:</b> {emp_data.get('EMPLOYEE NAME', 'N/A')}</td>
+                            <td><b>Employee Name:</b> {emp_data.get(emp_name_col, 'N/A')}</td>
                             <td><b>Employee Code:</b> {emp_id_val}</td>
-                            <td><b>Designation:</b> {emp_data.get('DESIGNATION', 'N/A')}</td>
+                            <td><b>Designation:</b> {emp_data.get(desig_col if desig_col else 'DESIGNATION', 'N/A')}</td>
                         </tr>
                         <tr>
-                            <td><b>Date of Joining:</b> {str(emp_data.get('DATE OF JOINING', 'N/A'))[:10]}</td>
-                            <td><b>Supervisor Name:</b> {emp_data.get('LEVEL2 EMPLOYEE NAME', 'N/A')}</td>
-                            <td><b>Status:</b> {emp_data.get('STATUS', 'N/A')}</td>
+                            <td><b>Date of Joining:</b> {str(emp_data.get(safe_doj, 'N/A'))[:10]}</td>
+                            <td><b>Supervisor Name:</b> {emp_data.get(safe_sup, 'N/A')}</td>
+                            <td><b>Status:</b> {emp_data.get(safe_stat, 'N/A')}</td>
                         </tr>
                         <tr>
                             <td><b>City/State:</b> {emp_data.get(city_col, '')}, {emp_data.get(state_col, '')}</td>
-                            <td><b>Channel:</b> {emp_data.get('EMPLOYEE CHANNEL TYPE', 'N/A')}</td>
-                            <td><b>SS Name:</b> {emp_data.get('LEVEL3 EMPLOYEE NAME', 'N/A')}</td>
+                            <td><b>Channel:</b> {emp_data.get(safe_chan, 'N/A')}</td>
+                            <td><b>SS Name:</b> {emp_data.get(safe_ss, 'N/A')}</td>
                         </tr>
                     </table>
                 </div>
@@ -253,7 +260,6 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
 
                         m_sales = emp_sales[emp_sales['Month'] == m]
                         
-                        # New Advanced Metrics
                         total_bills = int(m_sales[ticket_s].nunique()) if ticket_s else 0
                         total_lines = int(len(m_sales))
                         avg_line_billed = float(total_lines / total_bills) if total_bills > 0 else 0.0
@@ -291,7 +297,6 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                         total_full_val += full_val
                         m_counter += 1
 
-                    # TOTAL / ALL MONTHS
                     total_bills_all = int(emp_sales[ticket_s].nunique()) if ticket_s else 0
                     total_lines_all = int(len(emp_sales))
                     avg_line_all = float(total_lines_all / total_bills_all) if total_bills_all > 0 else 0.0
@@ -312,10 +317,8 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                     })
                     drill_down_data["Total / All Months"] = {'m_sales': emp_sales, 'md_val': total_md}
 
-                    # Render Level 1 Table
                     df_trend = pd.DataFrame(monthly_records)
                     
-                    # FORCE PANDAS DTYPES
                     df_trend["Mandays (MD)"] = pd.to_numeric(df_trend["Mandays (MD)"])
                     df_trend["Market Working (Billed)"] = pd.to_numeric(df_trend["Market Working (Billed)"])
                     df_trend["Total Bills (Invoices)"] = pd.to_numeric(df_trend["Total Bills (Invoices)"])
