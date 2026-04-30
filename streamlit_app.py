@@ -93,9 +93,11 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     col_visited = find_col(df_coverage, ['VISITED', 'VISIT'])
     col_billed = find_col(df_coverage, ['BILLED', 'BILL'])
 
+    # Find Brand, Category, SKU, and Store/Outlet ID
     brand_col = find_col(df_sales, ['BRAND'])
     cat_col = find_col(df_sales, ['CATEGORY', 'SEGMENT', 'PRODUCT GROUP', 'LINE'])
     sku_col = find_col(df_sales, ['SKU', 'PRODUCT NAME', 'ITEM NAME', 'DESCRIPTION', 'MATERIAL'])
+    store_col = find_col(df_sales, ['STORE', 'OUTLET', 'CUSTOMER', 'PARTY', 'RETAILER'])
 
     date_sales = find_date_col(df_sales)
     date_att = find_date_col(df_attendance)
@@ -137,7 +139,7 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     master = master.fillna('')
     master['emp_s'] = emp_s
 
-    return master, df_sales, df_attendance, df_coverage, df_fulfill, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col, cat_col, brand_col, sku_col, reg_col, state_col, city_col, emp_name_col, desig_col
+    return master, df_sales, df_attendance, df_coverage, df_fulfill, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col, cat_col, brand_col, sku_col, store_col, reg_col, state_col, city_col, emp_name_col, desig_col
 
 
 # ==========================================
@@ -156,7 +158,7 @@ f_ful = st.sidebar.file_uploader("6. Order Fulfillment", type=['xlsx'])
 if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
     with st.spinner("Processing data, please wait..."):
         try:
-            master_df, df_sales, df_att, df_cov, df_ful, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col, cat_col, brand_col, sku_col, reg_col, state_col, city_col, emp_name_col, desig_col = process_data(f_sales, f_user, f_att, f_cov, f_cc, f_ful)
+            master_df, df_sales, df_att, df_cov, df_ful, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col, cat_col, brand_col, sku_col, store_col, reg_col, state_col, city_col, emp_name_col, desig_col = process_data(f_sales, f_user, f_att, f_cov, f_cc, f_ful)
 
             currency_format = st.column_config.NumberColumn(format="₹ %,.0f")
             qty_format = st.column_config.NumberColumn(format="%,.1f")
@@ -243,6 +245,7 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                     price_lookup = df_sales[[ticket_s, price_col]].drop_duplicates(subset=[ticket_s]) if ticket_s else None
 
                     total_md = 0
+                    total_mw_visited = 0
                     total_mw_billed = 0
                     total_perf_sales = 0.0
                     total_full_val = 0.0
@@ -253,13 +256,16 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                             att_col = find_col(emp_att, ['ATTENDANCE', 'STATUS'])
                             if att_col: md_val = len(emp_att[(emp_att['Month'] == m) & (emp_att[att_col].astype(str).str.upper() == 'PRESENT')])
 
+                        mw_visited = 0
                         mw_billed = 0
                         if 'Month' in emp_coverage.columns:
                             m_cov = emp_coverage[emp_coverage['Month'] == m]
-                            mw_billed = m_cov[col_billed].sum() if col_billed else 0
+                            mw_visited = int(m_cov[col_visited].sum()) if col_visited else 0
+                            mw_billed = int(m_cov[col_billed].sum()) if col_billed else 0
 
                         m_sales = emp_sales[emp_sales['Month'] == m]
                         
+                        unique_outlets = int(m_sales[store_col].nunique()) if store_col else 0
                         total_bills = int(m_sales[ticket_s].nunique()) if ticket_s else 0
                         total_lines = int(len(m_sales))
                         avg_line_billed = float(total_lines / total_bills) if total_bills > 0 else 0.0
@@ -279,7 +285,9 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                         monthly_records.append({
                             "Timeline": timeline_name,
                             "Mandays (MD)": md_val,
+                            "Market Working (Visited)": mw_visited,
                             "Market Working (Billed)": mw_billed,
+                            "Unique Billed Outlets": unique_outlets,
                             "Total Bills (Invoices)": total_bills,
                             "Total Lines Sold": total_lines,
                             "Avg Line Billed": avg_line_billed,
@@ -292,11 +300,13 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                         drill_down_data[timeline_name] = {'m_sales': m_sales, 'md_val': md_val}
                         
                         total_md += md_val
+                        total_mw_visited += mw_visited
                         total_mw_billed += mw_billed
                         total_perf_sales += perf_sales
                         total_full_val += full_val
                         m_counter += 1
 
+                    total_outlets_all = int(emp_sales[store_col].nunique()) if store_col else 0
                     total_bills_all = int(emp_sales[ticket_s].nunique()) if ticket_s else 0
                     total_lines_all = int(len(emp_sales))
                     avg_line_all = float(total_lines_all / total_bills_all) if total_bills_all > 0 else 0.0
@@ -306,7 +316,9 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                     monthly_records.insert(0, {
                         "Timeline": "Total / All Months",
                         "Mandays (MD)": total_md,
+                        "Market Working (Visited)": total_mw_visited,
                         "Market Working (Billed)": total_mw_billed,
+                        "Unique Billed Outlets": total_outlets_all,
                         "Total Bills (Invoices)": total_bills_all,
                         "Total Lines Sold": total_lines_all,
                         "Avg Line Billed": avg_line_all,
@@ -319,8 +331,11 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
 
                     df_trend = pd.DataFrame(monthly_records)
                     
+                    # FORCE PANDAS DTYPES
                     df_trend["Mandays (MD)"] = pd.to_numeric(df_trend["Mandays (MD)"])
+                    df_trend["Market Working (Visited)"] = pd.to_numeric(df_trend["Market Working (Visited)"])
                     df_trend["Market Working (Billed)"] = pd.to_numeric(df_trend["Market Working (Billed)"])
+                    df_trend["Unique Billed Outlets"] = pd.to_numeric(df_trend["Unique Billed Outlets"])
                     df_trend["Total Bills (Invoices)"] = pd.to_numeric(df_trend["Total Bills (Invoices)"])
                     df_trend["Total Lines Sold"] = pd.to_numeric(df_trend["Total Lines Sold"])
                     df_trend["Avg Line Billed"] = pd.to_numeric(df_trend["Avg Line Billed"])
@@ -331,7 +346,9 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                     
                     col_configs_L1 = {
                         "Mandays (MD)": int_format,
+                        "Market Working (Visited)": int_format,
                         "Market Working (Billed)": int_format,
+                        "Unique Billed Outlets": int_format,
                         "Total Bills (Invoices)": int_format,
                         "Total Lines Sold": int_format,
                         "Avg Line Billed": st.column_config.NumberColumn(format="%.2f"),
