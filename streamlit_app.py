@@ -116,13 +116,12 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     base = tsi_sales.drop_duplicates(subset=[emp_s])
     master = pd.merge(base, df_user, left_on=emp_s, right_on=emp_u, how='left')
 
-    # Smart Columns Finder for UI
+    # Smart Columns Finder
     reg_col = find_col(master, ['REGION', 'ZONE'])
     state_col = find_col(master, ['STATE', 'PROVINCE'])
     city_col = find_col(master, ['CITY', 'TOWN', 'LOCATION'])
     emp_name_col = find_col(master, ['EMPLOYEE NAME', 'EMP NAME', 'USER NAME', 'NAME', 'FULL NAME'])
 
-    # Bulletproof Fallbacks
     if not reg_col: master['REGION'] = "N/A"; reg_col = 'REGION'
     if not state_col: master['STATE'] = "N/A"; state_col = 'STATE'
     if not city_col: master['CITY'] = "N/A"; city_col = 'CITY'
@@ -139,7 +138,6 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     master['emp_s'] = emp_s
 
     return master, df_sales, df_attendance, df_coverage, df_fulfill, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col, cat_col, brand_col, sku_col, store_col, reg_col, state_col, city_col, emp_name_col, desig_col
-
 
 # ==========================================
 # 3. APP LAYOUT & SIDEBAR
@@ -191,7 +189,6 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                 emp_data = master_df[master_df[emp_name_col] == selected_emp].iloc[0]
                 emp_id_val = emp_data[emp_s]
 
-                # Smart fallback for Profile Card details
                 safe_doj = find_col(master_df, ['JOINING', 'DOJ', 'DATE OF JOIN']) or 'DATE OF JOINING'
                 safe_sup = find_col(master_df, ['SUPERVISOR', 'LEVEL2', 'L2']) or 'LEVEL2 EMPLOYEE NAME'
                 safe_ss = find_col(master_df, ['SS NAME', 'LEVEL3', 'L3']) or 'LEVEL3 EMPLOYEE NAME'
@@ -222,7 +219,7 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                 """, unsafe_allow_html=True)
 
                 st.markdown("### 📅 High-Level Monthly Overview")
-                st.info("👆 **Level 1 Drill-Down:** Click a month (or 'Total / All Months') to view its Categories.")
+                st.info("👆 **Level 1 Drill-Down:** Click a month (or 'Total / All Months') in the table below to view its Categories.")
                 
                 emp_sales = df_sales[df_sales[emp_s] == emp_id_val]
                 emp_att = df_att[df_att[emp_a] == emp_id_val] if 'Month' in df_att.columns else pd.DataFrame()
@@ -281,8 +278,6 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                             full_val = float((pd.to_numeric(merged_f[price_col], errors='coerce').fillna(0) * pd.to_numeric(merged_f[signoff_col], errors='coerce').fillna(0)).sum())
 
                         timeline_name = f"M{m_counter} ({m})"
-                        
-                        # REMOVED: "Total Bills (Invoices)" from the dictionary so it doesn't show in UI.
                         monthly_records.append({
                             "Timeline": timeline_name,
                             "Mandays (MD)": md_val,
@@ -330,7 +325,6 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
 
                     df_trend = pd.DataFrame(monthly_records)
                     
-                    # FORCE PANDAS DTYPES
                     df_trend["Mandays (MD)"] = pd.to_numeric(df_trend["Mandays (MD)"])
                     df_trend["Market Working (Visited)"] = pd.to_numeric(df_trend["Market Working (Visited)"])
                     df_trend["Market Working (Billed)"] = pd.to_numeric(df_trend["Market Working (Billed)"])
@@ -364,10 +358,21 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                         st.dataframe(df_trend, use_container_width=True, hide_index=True, column_config=col_configs_L1)
                         selected_timeline = st.selectbox("Select Timeline:", df_trend['Timeline'].tolist())
 
+                    # ---------------------------------------------------------
+                    # LEVEL 1 CHART: Trend Line (Sales vs Fulfillment)
+                    # ---------------------------------------------------------
+                    chart_df_L1 = df_trend[df_trend["Timeline"] != "Total / All Months"]
+                    if not chart_df_L1.empty and len(chart_df_L1) > 0:
+                        fig1 = px.bar(chart_df_L1, x="Timeline", y=["Performance (Sales ₹)", "Order Fullfilment (₹)"], 
+                                      barmode='group', title="📊 Monthly Trend: Sales vs Fulfillment",
+                                      color_discrete_map={"Performance (Sales ₹)": "#3498db", "Order Fullfilment (₹)": "#2ecc71"})
+                        st.plotly_chart(fig1, use_container_width=True)
+
                     # ==========================================
-                    # LEVEL 2: DRILL-DOWN CATEGORY TABLE
+                    # LEVEL 2: DRILL-DOWN CATEGORY TABLE & CHART
                     # ==========================================
                     if selected_timeline:
+                        st.markdown("---")
                         st.markdown(f"<div class='drilldown-header'>🔽 Category Breakdown for {selected_timeline}</div>", unsafe_allow_html=True)
                         st.info("👆 **Level 2 Drill-Down:** Click on any Category below to see the individual Products/SKUs.")
                         
@@ -385,7 +390,7 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                                 
                                 for name, group in grouped:
                                     types_of_products = int(group[sku_col].nunique()) if sku_col else len(group)
-                                    stores_billed = int(group[store_col].nunique()) if store_col else int(group[ticket_s].nunique()) # Changed to Store count
+                                    stores_billed = int(group[store_col].nunique()) if store_col else int(group[ticket_s].nunique())
                                     cat_sales_val = float(group[sales_val_col].sum()) if sales_val_col else 0.0
                                     cat_qty = float(group[qty_case_col].sum()) if qty_case_col else 0.0
                                     
@@ -422,19 +427,37 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                                     "Order Fulfillment": currency_format
                                 }
 
+                                # UI Split: Table on Left, Chart on Right
+                                col_t2, col_c2 = st.columns([3, 2])
+                                
                                 selected_category = None
-                                try:
-                                    event_2 = st.dataframe(df_detail, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", column_config=col_configs_L2)
-                                    if len(event_2.selection.rows) > 0:
-                                        selected_category = df_detail.iloc[event_2.selection.rows[0]]['Category / Brand']
-                                except TypeError:
-                                    st.dataframe(df_detail, use_container_width=True, hide_index=True, column_config=col_configs_L2)
-                                    selected_category = st.selectbox("Select Category:", df_detail['Category / Brand'].tolist())
+                                with col_t2:
+                                    try:
+                                        event_2 = st.dataframe(df_detail, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", column_config=col_configs_L2)
+                                        if len(event_2.selection.rows) > 0:
+                                            selected_category = df_detail.iloc[event_2.selection.rows[0]]['Category / Brand']
+                                    except TypeError:
+                                        st.dataframe(df_detail, use_container_width=True, hide_index=True, column_config=col_configs_L2)
+                                        selected_category = st.selectbox("Select Category:", df_detail['Category / Brand'].tolist())
+
+                                # ---------------------------------------------------------
+                                # LEVEL 2 CHART: Donut Chart for Categories
+                                # ---------------------------------------------------------
+                                with col_c2:
+                                    if df_detail["Total Sales Value"].sum() > 0:
+                                        fig2 = px.pie(df_detail, values='Total Sales Value', names='Category / Brand', hole=0.4, 
+                                                      title=f"Sales Distribution ({selected_timeline})",
+                                                      color_discrete_sequence=px.colors.qualitative.Pastel)
+                                        fig2.update_traces(textposition='inside', textinfo='percent+label')
+                                        st.plotly_chart(fig2, use_container_width=True)
+                                    else:
+                                        st.info("No Sales Value to plot.")
 
                                 # ==========================================
-                                # LEVEL 3: DRILL-DOWN PRODUCT/SKU TABLE
+                                # LEVEL 3: DRILL-DOWN PRODUCT/SKU TABLE & CHART
                                 # ==========================================
                                 if selected_category:
+                                    st.markdown("---")
                                     st.markdown(f"<div class='drilldown-header-sku'>📦 Product Breakdown for: {selected_category} ({selected_timeline})</div>", unsafe_allow_html=True)
                                     
                                     cat_sales = m_sales[m_sales[grouping_col] == selected_category]
@@ -477,7 +500,25 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                                             "Total Sales Value": currency_format,
                                             "Order Fulfillment": currency_format
                                         }
-                                        st.dataframe(df_product, use_container_width=True, hide_index=True, column_config=col_configs_L3)
+
+                                        # UI Split: Table on Left, Chart on Right
+                                        col_t3, col_c3 = st.columns([3, 2])
+                                        with col_t3:
+                                            st.dataframe(df_product, use_container_width=True, hide_index=True, column_config=col_configs_L3)
+
+                                        # ---------------------------------------------------------
+                                        # LEVEL 3 CHART: Horizontal Bar for Top Products
+                                        # ---------------------------------------------------------
+                                        with col_c3:
+                                            if df_product["Total Sales Value"].sum() > 0:
+                                                top_products = df_product.sort_values("Total Sales Value", ascending=True).tail(10) # Show top 10 max
+                                                fig3 = px.bar(top_products, x="Total Sales Value", y="Product Name", orientation='h',
+                                                              title=f"🏆 Top Products in {selected_category}",
+                                                              color="Total Sales Value", color_continuous_scale="Viridis")
+                                                fig3.update_layout(showlegend=False)
+                                                st.plotly_chart(fig3, use_container_width=True)
+                                            else:
+                                                st.info("No Sales Value to plot.")
                                     else:
                                         st.warning("No Product/SKU column found to generate this view.")
 
