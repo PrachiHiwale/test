@@ -278,6 +278,7 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                             full_val = float((pd.to_numeric(merged_f[price_col], errors='coerce').fillna(0) * pd.to_numeric(merged_f[signoff_col], errors='coerce').fillna(0)).sum())
 
                         timeline_name = f"M{m_counter} ({m})"
+                        
                         monthly_records.append({
                             "Timeline": timeline_name,
                             "Mandays (MD)": md_val,
@@ -325,6 +326,7 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
 
                     df_trend = pd.DataFrame(monthly_records)
                     
+                    # FORCE PANDAS DTYPES
                     df_trend["Mandays (MD)"] = pd.to_numeric(df_trend["Mandays (MD)"])
                     df_trend["Market Working (Visited)"] = pd.to_numeric(df_trend["Market Working (Visited)"])
                     df_trend["Market Working (Billed)"] = pd.to_numeric(df_trend["Market Working (Billed)"])
@@ -359,17 +361,20 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                         selected_timeline = st.selectbox("Select Timeline:", df_trend['Timeline'].tolist())
 
                     # ---------------------------------------------------------
-                    # LEVEL 1 CHART: Trend Line (Sales vs Fulfillment)
+                    # NEW LEVEL 1 CHART: Smooth Line Trend (Time Series)
                     # ---------------------------------------------------------
                     chart_df_L1 = df_trend[df_trend["Timeline"] != "Total / All Months"]
                     if not chart_df_L1.empty and len(chart_df_L1) > 0:
-                        fig1 = px.bar(chart_df_L1, x="Timeline", y=["Performance (Sales ₹)", "Order Fullfilment (₹)"], 
-                                      barmode='group', title="📊 Monthly Trend: Sales vs Fulfillment",
+                        fig1 = px.line(chart_df_L1, x="Timeline", y=["Performance (Sales ₹)", "Order Fullfilment (₹)"], 
+                                      markers=True, title="📈 Monthly Trend: Sales vs Fulfillment",
                                       color_discrete_map={"Performance (Sales ₹)": "#3498db", "Order Fullfilment (₹)": "#2ecc71"})
+                        # Make the lines smooth and thicker for a modern look
+                        fig1.update_traces(line_shape='spline', line=dict(width=4), marker=dict(size=10))
+                        fig1.update_layout(hovermode="x unified", legend_title_text='')
                         st.plotly_chart(fig1, use_container_width=True)
 
                     # ==========================================
-                    # LEVEL 2: DRILL-DOWN CATEGORY TABLE & CHART
+                    # LEVEL 2: DRILL-DOWN CATEGORY TABLE
                     # ==========================================
                     if selected_timeline:
                         st.markdown("---")
