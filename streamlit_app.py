@@ -116,7 +116,7 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     base = tsi_sales.drop_duplicates(subset=[emp_s])
     master = pd.merge(base, df_user, left_on=emp_s, right_on=emp_u, how='left')
 
-    # Smart Columns Finder
+    # Smart Columns Finder for UI
     reg_col = find_col(master, ['REGION', 'ZONE'])
     state_col = find_col(master, ['STATE', 'PROVINCE'])
     city_col = find_col(master, ['CITY', 'TOWN', 'LOCATION'])
@@ -138,6 +138,7 @@ def process_data(sales_file, user_file, att_file, cov_file, cc_file, ful_file):
     master['emp_s'] = emp_s
 
     return master, df_sales, df_attendance, df_coverage, df_fulfill, emp_s, emp_a, emp_cov, emp_f, sales_val_col, qty_case_col, col_visited, col_billed, ticket_s, ticket_f, price_col, signoff_col, cat_col, brand_col, sku_col, store_col, reg_col, state_col, city_col, emp_name_col, desig_col
+
 
 # ==========================================
 # 3. APP LAYOUT & SIDEBAR
@@ -326,7 +327,6 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
 
                     df_trend = pd.DataFrame(monthly_records)
                     
-                    # FORCE PANDAS DTYPES
                     df_trend["Mandays (MD)"] = pd.to_numeric(df_trend["Mandays (MD)"])
                     df_trend["Market Working (Visited)"] = pd.to_numeric(df_trend["Market Working (Visited)"])
                     df_trend["Market Working (Billed)"] = pd.to_numeric(df_trend["Market Working (Billed)"])
@@ -361,16 +361,15 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                         selected_timeline = st.selectbox("Select Timeline:", df_trend['Timeline'].tolist())
 
                     # ---------------------------------------------------------
-                    # NEW LEVEL 1 CHART: Smooth Line Trend (Time Series)
+                    # LEVEL 1 CHART: Grouped Bar Chart (Reverted back as requested)
                     # ---------------------------------------------------------
                     chart_df_L1 = df_trend[df_trend["Timeline"] != "Total / All Months"]
                     if not chart_df_L1.empty and len(chart_df_L1) > 0:
-                        fig1 = px.line(chart_df_L1, x="Timeline", y=["Performance (Sales ₹)", "Order Fullfilment (₹)"], 
-                                      markers=True, title="📈 Monthly Trend: Sales vs Fulfillment",
+                        fig1 = px.bar(chart_df_L1, x="Timeline", y=["Performance (Sales ₹)", "Order Fullfilment (₹)"], 
+                                      barmode='group', title="📊 Monthly Trend: Sales vs Fulfillment",
                                       color_discrete_map={"Performance (Sales ₹)": "#3498db", "Order Fullfilment (₹)": "#2ecc71"})
-                        # Make the lines smooth and thicker for a modern look
-                        fig1.update_traces(line_shape='spline', line=dict(width=4), marker=dict(size=10))
-                        fig1.update_layout(hovermode="x unified", legend_title_text='')
+                        # Making the chart smaller in height
+                        fig1.update_layout(height=320, margin=dict(t=40, b=0, l=0, r=0), legend_title_text='')
                         st.plotly_chart(fig1, use_container_width=True)
 
                     # ==========================================
@@ -432,7 +431,6 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                                     "Order Fulfillment": currency_format
                                 }
 
-                                # UI Split: Table on Left, Chart on Right
                                 col_t2, col_c2 = st.columns([3, 2])
                                 
                                 selected_category = None
@@ -454,12 +452,13 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                                                       title=f"Sales Distribution ({selected_timeline})",
                                                       color_discrete_sequence=px.colors.qualitative.Pastel)
                                         fig2.update_traces(textposition='inside', textinfo='percent+label')
+                                        fig2.update_layout(height=350, margin=dict(t=40, b=0, l=0, r=0))
                                         st.plotly_chart(fig2, use_container_width=True)
                                     else:
                                         st.info("No Sales Value to plot.")
 
                                 # ==========================================
-                                # LEVEL 3: DRILL-DOWN PRODUCT/SKU TABLE & CHART
+                                # LEVEL 3: DRILL-DOWN PRODUCT/SKU TABLE
                                 # ==========================================
                                 if selected_category:
                                     st.markdown("---")
@@ -506,21 +505,20 @@ if all([f_sales, f_user, f_att, f_cov, f_cc, f_ful]):
                                             "Order Fulfillment": currency_format
                                         }
 
-                                        # UI Split: Table on Left, Chart on Right
                                         col_t3, col_c3 = st.columns([3, 2])
                                         with col_t3:
                                             st.dataframe(df_product, use_container_width=True, hide_index=True, column_config=col_configs_L3)
 
                                         # ---------------------------------------------------------
-                                        # LEVEL 3 CHART: Horizontal Bar for Top Products
+                                        # LEVEL 3 CHART: Horizontal Bar
                                         # ---------------------------------------------------------
                                         with col_c3:
                                             if df_product["Total Sales Value"].sum() > 0:
-                                                top_products = df_product.sort_values("Total Sales Value", ascending=True).tail(10) # Show top 10 max
+                                                top_products = df_product.sort_values("Total Sales Value", ascending=True).tail(10) 
                                                 fig3 = px.bar(top_products, x="Total Sales Value", y="Product Name", orientation='h',
                                                               title=f"🏆 Top Products in {selected_category}",
                                                               color="Total Sales Value", color_continuous_scale="Viridis")
-                                                fig3.update_layout(showlegend=False)
+                                                fig3.update_layout(height=350, margin=dict(t=40, b=0, l=0, r=0), showlegend=False)
                                                 st.plotly_chart(fig3, use_container_width=True)
                                             else:
                                                 st.info("No Sales Value to plot.")
